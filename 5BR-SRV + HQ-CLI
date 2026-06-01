@@ -1,0 +1,47 @@
+==========BR-SRV==========
+
+root/toor
+
+-------имя хоста/NTP---------
+hostnamectl hostname br-srv.au-team.irpo
+	exec bash
+timedatectl set-timezone Europe/Moscow
+
+-------настройка интерфейсов-------------
+echo 'TYPE=eth' > /etc/net/ifaces/ens18/options
+echo '192.168.3.2/28' > /etc/net/ifaces/ens18/ipv4address
+echo 'default via 192.168.3.1' > /etc/net/ifaces/ens18/ipv4route
+echo $'search au-team.irpo\nnameserver 192.168.111.2' > /etc/net/ifaces/ens18/resolv.conf
+systemctl restart network
+
+-------настройка sshuser-------------
+useradd -u 2011 sshuser
+echo "sshuser:P@ssw0rd" | chpasswd
+usermod -aG wheel sshuser
+echo "WHEEL_USERS ALL=(ALL:ALL) NOPASSWD: ALL" > /etc/sudoers.d/sshuser
+su -l sshuser
+sudo id
+
+--------настройка SSH----------------
+echo "Authorized access only" > /etc/openssh/banner
+echo -e "Port 2011\nMaxAuthTries 2\nAllowUsers sshuser\nBanner /etc/openssh/banner\n" >> /etc/openssh/sshd_config
+systemctl restart sshd
+
+==========HQ-CLI==========
+
+СТАВИМ ТЕГ VLAN 211 НА ИНТЕРФЕЙС 
+
+-------имя хоста/NTP---------
+hostnamectl hostname hq-cli.au-team.irpo
+	exec bash
+timedatectl set-timezone Europe/Moscow
+
+ВОЗМОЖНО пригодиться
+
+# VLAN 211 + DHCP клиент
+echo 'TYPE=eth' > /etc/net/ifaces/ens18/options
+echo 'TYPE=vlan' > /etc/net/ifaces/vlan211/options
+echo 'HOST=ens18' >> /etc/net/ifaces/vlan211/options
+echo 'VID=211' >> /etc/net/ifaces/vlan211/options
+systemctl restart network
+ip -br -c a
