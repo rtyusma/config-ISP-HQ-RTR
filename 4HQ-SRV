@@ -1,0 +1,80 @@
+==========HQ-SRV==========
+
+root/toor
+
+-------имя хоста/NTP---------
+hostnamectl hostname hq-srv.au-team.irpo
+	exec bash
+timedatectl set-timezone Europe/Moscow
+
+-------настройка интерфейсов-------------
+echo 'TYPE=eth' > /etc/net/ifaces/ens18/options
+echo '192.168.111.2/27' > /etc/net/ifaces/ens18/ipv4address
+echo 'default via 192.168.111.1' > /etc/net/ifaces/ens18/ipv4route
+echo 'nameserver 8.8.8.8' > /etc/net/ifaces/ens18/resolv.conf
+systemctl restart network
+
+-------настройка sshuser-------------
+useradd -u 2011 sshuser
+echo "sshuser:P@ssw0rd" | chpasswd
+usermod -aG wheel sshuser
+echo "WHEEL_USERS ALL=(ALL:ALL) NOPASSWD: ALL" > /etc/sudoers.d/sshuser
+su -l sshuser
+sudo id
+
+--------настройка SSH----------------
+echo "Authorized access only" > /etc/openssh/banner
+echo -e "Port 2011\nMaxAuthTries 2\nAllowUsers sshuser\nBanner /etc/openssh/banner\n" >> /etc/openssh/sshd_config
+systemctl restart sshd
+
+-------установка необходимого ПО-------
+apt-get update && apt-get install bind bind-utils -y
+
+--------BIND9---------------
+rndc-confgen -a -c /etc/bind/rndc.key
+
+cat <<'EOF' > /etc/bind/options.conf
+options {
+    directory "/etc/bind/zone";
+    forwarders { 77.88.8.7; 77.88.8.3; };
+    recursion yes;
+    allow-recursion { any; };
+    allow-query { any; };
+    dnssec-validation no;
+};
+zone "au-team.irpo" {
+    type master;
+    file "au-team.irpo";
+};
+zone "168.192.in-addr.arpa" {
+    type master;
+    file "168.192.in-addr.arpa";
+};
+EOF
+
+cat <<'EOF' > /etc/bind/zone/au-team.irpo
+$TTL 1D
+@ IN SOA hq-srv.au-team.irpo. root.au-team.irpo. ( 2025060101 12H 1H 1W 1H )
+@       IN NS     hq-srv.au-team.irpo.
+hq-rtr  IN A      192.168.111.1
+hq-srv  IN A      192.168.111.2
+hq-cli  IN A      192.168.211.2
+br-rtr  IN A      192.168.3.1
+br-srv  IN A      192.168.3.2
+docker  IN A      172.16.10.1
+web     IN A      172.16.20.1
+EOF
+
+cat <<'EOF' > /etc/bind/zone/168.192.in-addr.arpa
+$TTL 1D
+@ IN SOA hq-srv.au-team.irpo. root.au-team.irpo. ( 2025060101 12H 1H 1W 1H )
+@       IN NS     hq-srv.au-team.irpo.
+1.111   IN PTR    hq-rtr.au-team.irpo.
+2.111   IN PTR    hq-srv.au-team.irpo.
+2.211   IN PTR    hq-cli.au-team.irpo.
+EOF
+
+chown -R named:named /etc/bind/zone
+systemctl enable --now bind
+host hq-rtr.au-team.irpo
+host -t PTR 192.168.111.2
