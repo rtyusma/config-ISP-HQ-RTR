@@ -66,6 +66,18 @@ host_key_checking = False
 interpreter_python=/usr/bin/python3
 EOF
 
+или
+
+изменить и раскомментировать строки
+
+vim /etc/ansible/ansible.cfg 
+
+
+[defaults]
+host_key_checking = False
+interpreter_python=/usr/bin/python3
+
+
 cat << EOF >/etc/ansible/hosts
 HQ-SRV ansible_user=sshuser ansible_password=P@ssw0rd ansible_port=2011
 HQ-RTR ansible_user=net_admin ansible_password=P@ssw0rd
