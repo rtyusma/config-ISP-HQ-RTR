@@ -1,0 +1,129 @@
+# BR-SRV
+# 1)Настройте контроллер домена Samba DC на сервере BR-SRV
+# 2)Сконфигурируйте ansible на сервере BR-SRV
+# 3)Разверните веб приложение в docker на сервере BR-SRV
+
+==========Domain================== 
+
+---------SambaDC------------
+ping ya.ru -c 2
+
+apt-get install task-samba-dc -y
+rm -f /etc/samba/smb.conf
+rm -rf {/var/lib/samba, /var/cache/samba}
+mkdir -p /var/lib/samba/sysvol
+
+samba-tool domain provision
+
+mv /etc/krb5.conf /etc/krb5.conf.back 
+cp /var/lib/samba/private/krb5.conf /etc/krb5.conf 
+
+systemctl enable --now samba 
+systemctl status samba
+
+samba-tool domain info 127.0.0.1
+
+echo $'search au-team.irpo\nnameserver 127.0.0.1' > /etc/net/ifaces/ens18/resolv.conf; systemctl restart network; cat /etc/resolv.conf
+
+---------DNS------------
+
+samba-tool dns add br-srv.au-team.irpo au-team.irpo hq-srv A 192.168.1.10 -U Administrator
+samba-tool dns add br-srv.au-team.irpo au-team.irpo hq-rtr A 192.168.1.1 -U Administrator
+samba-tool dns add br-srv.au-team.irpo au-team.irpo br-rtr A 192.168.3.1 -U Administrator
+samba-tool dns add br-srv.au-team.irpo au-team.irpo web.au-team.irpo A 172.16.1.1 -U Administrator
+samba-tool dns add br-srv.au-team.irpo au-team.irpo docker.au-team.irpo A 172.16.2.1 -U Administrator
+
+samba-tool dns query br-srv.au-team.irpo au-team.irpo @ ALL -U administrator
+
+---------Users----------
+samba-tool group add hq
+
+for i in {1..5}; do samba-tool user add hquser$i P@ssw0rd; done
+for i in {1..5}; do samba-tool group addmembers hq hquser$i; done
+
+samba-tool group listmembers hq
+
+===========HQ-CLI
+вводим HQ-CLI в домен
+apt-get install task-auth-ad-sssd
+
+на HQ-CLI  перезагружаем сеть, проверяем DNS
+вводим в домен
+
+control libnss-role
+roleadd hq wheel
+
+echo "WHEEL_USERS ALL=(ALL:ALL) /usr/bin/cat, /usr/bin/grep, /usr/bin/id" >> /etc/sudoers
+tail /etc/sudoers
+заходим доменным пользователем, выполняем sudo id 
+==========Ansible================== 
+
+apt-get install ansible sshpass -y
+
+cat << EOF >/etc/ansible/ansible.cfg
+[defaults]
+host_key_checking = False
+interpreter_python=/usr/bin/python3
+EOF
+
+cat << EOF >/etc/ansible/hosts
+HQ-SRV ansible_user=sshuser ansible_password=P@ssw0rd ansible_port=2011
+HQ-RTR ansible_user=net_admin ansible_password=P@ssw0rd
+BR-RTR ansible_user=net_admin ansible_password=P@ssw0rd 
+HQ-CLI ansible_user=user ansible_password=resu
+EOF
+
+ansible all -m ping
+
+==========Docker================== 
+
+apt-get install docker-engine docker-compose-v2 -y
+systemctl enable --now docker.service
+mount -o loop /dev/sr0 /mnt/ -v
+ls -l /mnt/docker/
+
+docker load < /mnt/docker/site_latest.tar
+docker load < /mnt/docker/mariadb_latest.tar
+docker image ls
+
+# ИСПРАВЛЕННЫЙ docker-compose (точно по заданию)
+cat << EOF > docker-compose.yml
+services:
+  db:
+    container_name: db
+    image: mariadb:latest
+    restart: always
+    environment:
+      MARIADB_DATABASE: testdb1
+      MARIADB_USER: test1
+      MARIADB_PASSWORD: P@ssw0rd
+      MARIADB_ROOT_PASSWORD: P@ssw0rd
+    volumes:
+      - db_data:/var/lib/mysql
+      
+  site:
+    container_name: site
+    image: site:latest
+    restart: always
+    ports: 
+      - "8081:8000"
+    environment: 
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_NAME: testdb1
+      DB_USER: test1
+      DB_PASS: P@ssw0rd
+      DB_TYPE: maria
+    depends_on: 
+      - db
+volumes:
+  db_data:
+EOF
+
+docker compose config
+docker compose up -d 
+docker ps
+ss -ltnp4 | grep 8081
+
+# Chrony
+sed -i 's/pool pool.ntp.org iburst/server 172.16.1.1 iburst/' /etc/chrony.conf && systemctl restart chronyd && chronyc sources
